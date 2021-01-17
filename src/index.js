@@ -2,7 +2,7 @@
 function HlsjsIPFSLoaderFactory (ipfs) {
   return class HlsjsIPFSLoader {
     constructor(config) {
-      this._abortFlag = [false];
+      this._abortFlag = new AbortController();
       this.ipfs = ipfs;
       this.hash = config.ipfsHash;
       this.debug = config.debug === false ? function () {
@@ -15,7 +15,7 @@ function HlsjsIPFSLoaderFactory (ipfs) {
     }
 
     abort() {
-      this._abortFlag[0] = true;
+      this._abortFlag.abort();
     }
 
     load(context, config, callbacks) {
@@ -95,7 +95,7 @@ function HlsjsIPFSLoaderFactory (ipfs) {
         }
         return;
       }
-      this._abortFlag[0] = false;
+      this._abortFlag = new AbortController();
       getFile(this.ipfs, this.hash, filename, options, this.debug, this._abortFlag).then(res => {
         const data = (context.responseType === 'arraybuffer') ? res : buf2str(res)
         stats.loaded = stats.total = data.length
@@ -111,9 +111,13 @@ async function getFile(ipfs, rootHash, filename, options, debug, abortFlag) {
   debug(`Fetching hash for '${ rootHash ? `${ rootHash }/` : ""}${ filename }'`);
   const path = `${ rootHash ? `${ rootHash }/` : "" }${ filename }`;
   try {
-    return await cat(path, options, ipfs, debug, abortFlag)
-  } catch(ex) {
-    throw new Error(`File not found: ${ rootHash ? `${ rootHash }/` : "" }${filename}`)
+    return await cat(path, options, ipfs, debug, abortFlag);
+  } catch(e) {
+    if (e.name === "AbortError" || "ABORT_ERR") {
+      throw new Error(`Cancelled reading '${ rootHash ? `${ rootHash }/` : "" }${filename}' from IPFS`);
+    }
+    debug(e.message);
+    throw new Error(`File not found: '${ rootHash ? `${ rootHash }/` : "" }${filename}'`);
   }
 }
 
@@ -121,27 +125,20 @@ function buf2str(buf) {
   return new TextDecoder().decode(buf)
 }
 
-async function cat (cid, options, ipfs, debug, abortFlag) {
-  const parts = []
-  let length = 0, offset = 0
-
-  for await (const buf of ipfs.cat(cid, options)) {
-    parts.push(buf)
-    length += buf.length
-    if (abortFlag[0]) {
-      debug('Cancel reading from ipfs')
-      break
-    }
+async function cat (cid, options, ipfs, debug, { signal }) {
+  const parts = [];
+  let length = 0, offset = 0;
+  for await (const buf of ipfs.cat(cid, { ...options, signal })) {
+    parts.push(buf);
+    length += buf.length;
   }
-
-  const value = new Uint8Array(length)
+  const value = new Uint8Array(length);
   for (const buf of parts) {
-    value.set(buf, offset)
-    offset += buf.length
+    value.set(buf, offset);
+    offset += buf.length;
   }
-
-  debug(`Received data for file '${cid}' size: ${value.length} in ${parts.length} blocks`)
-  return value
+  debug(`Received data for file '${ cid }' size: ${ value.length } in ${ parts.length } blocks`);
+  return value;
 }
 
 exports = module.exports = HlsjsIPFSLoaderFactory;
