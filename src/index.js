@@ -129,6 +129,7 @@ async function getFile(ipfs, rootHash, filename, options, debug, abortFlag) {
 }
 
 function buf2str(buf) {
+  // .decode() returns a string
   return new TextDecoder().decode(buf)
 }
 
@@ -136,7 +137,12 @@ async function cat (cid, options, ipfs, debug, abortFlag) {
   const parts = []
   let length = 0, offset = 0
 
+  // By default, js-ipfs will wait forever
+  options.timeout = 20000
+
+  debug('Begin: ipfs.cat(), will invoke ipfs.cat with cid: ' + cid + ', options: ' + options)
   for await (const buf of ipfs.cat(cid, options)) {
+    debug('ipfs.cat() returned buf of length: ' + buf.length)
     parts.push(buf)
     length += buf.length
     if (abortFlag[0]) {
